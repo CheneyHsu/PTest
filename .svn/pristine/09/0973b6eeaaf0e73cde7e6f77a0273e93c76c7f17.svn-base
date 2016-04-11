@@ -1,0 +1,13 @@
+select spid,pid,program from v$process where program like '%SMON%';
+
+alter system set fast_start_parallel_rollback=false;
+
+ 
+oradebug setorapid 9
+oradebug event 10513 trace name context forever, level 2
+
+#kill p00x processes
+
+oradebug setorapid 9
+oradebug event 10513 trace name context off
+

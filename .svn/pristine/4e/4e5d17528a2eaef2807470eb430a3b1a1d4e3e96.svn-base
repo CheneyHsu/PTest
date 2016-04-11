@@ -1,0 +1,75 @@
+/***********************************************************/
+/************* 10    MISC SQL INFO COLLECTION   ************/
+/***********************************************************/
+set pagesize 999
+set linesize 131
+
+define v_sql_id=5ryhcrnzjnfb6 
+define v_sql_hash_value=1058683238
+define v_owner=
+define v_tab_name=
+
+/***********************************************************/
+/*******************   0. optimizer review   ****************/
+/***********************************************************/
+
+select name||' = '||value all_optim_param from v$parameter 
+where name like '%optim%' 
+or name in ('db_file_multiblock_read_count','pga_aggregate_target')
+order by 1;
+
+select name||' = '||value non_default_param  from v$parameter 
+where name like '%optim%' and isdefault='FALSE'
+order by 1;
+
+select name||' = '||value hidden_param from v$parameter 
+where name like '\_%' escape '\'
+and name not in (
+'_enable_NUMA_optimization',
+'_db_block_numa',
+'_gc_undo_affinity',
+'_gc_affinity_time',
+'_undo_autotune',
+'_cursor_features_enabled')
+order by 1;
+
+
+/***********************************************************/
+/*******************   1. SQL PLAN review   ****************/
+/***********************************************************/
+
+
+
+SELECT 
+  l.sql_id,
+  l.hash_value,
+  l.child_number,
+  l.plan_hash_value,
+  l.sql_text
+FROM
+  v$sql l
+WHERE
+l.sql_text like 'select * from gst01 where c1>10999';
+
+--------------------------------------------- DISPLAY PLAN_TABLE MANUALLY
+
+select 
+plan_id||lpad(' ',depth*2)||operation||' '||options||'  '
+||decode(object_owner,null,null,object_owner||'.'||object_name)
+||'(Optimizer: '||optimizer||')' 
+||'(Cost: '||cost||' IO COST: '||io_cost||')' 
+||'(Card: '||cardinality||')'
+||'(Bytes: '||bytes||')'
+||'(Filter: '||filter_predicates||')'
+||'.'||'(Access: '||access_predicates||')'
+||'(part_start: '||partition_start||')'
+||'(part_stop: '||partition_stop||')'
+||'(part_id: '||partition_id||')'  sql_plan
+from plan_table
+order by  statement_id,plan_id,id
+; 
+
+
+
+
+

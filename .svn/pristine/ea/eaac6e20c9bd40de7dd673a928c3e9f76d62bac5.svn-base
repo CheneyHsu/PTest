@@ -1,0 +1,1 @@
+select to_char(time_suggested,'yyyymmdd hh24:mi:ss') sugg_time, object_name,subobject_name,reason from DBA_OUTSTANDING_ALERTS;

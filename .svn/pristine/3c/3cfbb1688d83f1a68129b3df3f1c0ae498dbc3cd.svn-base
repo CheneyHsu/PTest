@@ -1,0 +1,7 @@
+alter system set job_queue_processes=60 scope=memory;
+
+CREATE UNIQUE INDEX <iiiiiii> on <ttttttt>(ccccc,ccccc,ccccc) local nologging tablespace <dddddddd> unusable; 
+
+EXECUTE dbms_pclxutil.build_part_index(2,16,<ttttttt>,<iiiiiii> ,FALSE);
+
+

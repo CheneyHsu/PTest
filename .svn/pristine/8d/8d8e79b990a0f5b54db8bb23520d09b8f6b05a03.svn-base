@@ -1,0 +1,20 @@
+/etc/passwd
+/etc/group
+/etc/hosts
+/etc/fstab
+#/etc/inetd.conf   # 无
+/etc/inittab
+#/etc/lvmtab     # 无
+/etc/netconfig
+/etc/networks
+/etc/resolv.conf
+/etc/nsswitch.conf
+/etc/ntp.conf
+#/etc/pam.conf   # 无
+/etc/services
+/etc/syslog.conf
+/etc/syslog-ng/syslog-ng.conf
+/etc/tcpd.conf
+#/etc/rc.config.d/*   #无
+/etc/security/limits.conf 
+/etc/sysconfig/network/routes 

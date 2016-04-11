@@ -1,0 +1,924 @@
+-----------------------------------------------------------------------
+--(c) Copyright IBM Corporation 2006  All rights reserved.           --
+--                                                                   --
+--This sample program is owned by International Business Machines    --
+--Corporation or one of its subsidiaries ("IBM") and is copyrighted  --
+--and licensed, not sold.                                            --
+--BY ACCESSING, COPYING, OR USING THIS SAMPLE PROGRAM, YOU AGREE TO  --
+--THE TERMS OF THE AGREEMENT TITLED "International License Agreement --
+--for Non-Warranted db2perf Programs" LOCATED IN THE FILE NAMED      --
+--"license.txt".                                                     --
+--                                                                   --
+-- db2perf_plans.db2                                                 --
+-- Hong Ye - hongye@hrbb.com.cn                                     --
+--                                                                   --
+-- Analyzes explain tables to identify biggest hitters in terms of   --
+-- total cost and IO cost.   Also identifies indexes that aren't     --
+-- used in the current explain plans.                                --
+--                                                                   --
+-----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+-- db2perf_quiet_drop
+--
+-- Executes an SQL 'DROP', suppressing the 'not found' error if it occurs.
+-- Useful for avoiding spurious errors when doing DROPs in setup scripts.
+-- Prepends the 'DROP' verb to the statement, so the statement passed in
+-- is something like 
+--     CALL db2perf_quiet_drop( 'table foo' )
+-- which executes "DROP table foo"
+----------------------------------------------------------------------
+
+DROP PROCEDURE db2perf_quiet_drop( VARCHAR(1000) )@
+
+ECHO Creating db2perf_quiet_drop@
+
+CREATE PROCEDURE db2perf_quiet_drop( IN statement VARCHAR(1000) )
+LANGUAGE SQL
+BEGIN
+   DECLARE SQLSTATE CHAR(5);
+   DECLARE NotThere    CONDITION FOR SQLSTATE '42704';
+   DECLARE NotThereSig CONDITION FOR SQLSTATE '42883';
+
+   DECLARE EXIT HANDLER FOR NotThere, NotThereSig
+      SET SQLSTATE = '     ';
+
+   SET statement = 'DROP ' || statement;
+   EXECUTE IMMEDIATE statement;
+END@
+
+
+CALL db2perf_quiet_drop('PROCEDURE db2perf_plans')@
+
+CALL db2perf_quiet_drop('TABLE db2perf_plans_report')@
+CREATE TABLE db2perf_plans_report( line INTEGER, message VARCHAR(128) )@
+
+-----------------------------------------------------------------------
+-- Create a scratch table db2perf_plans_ranking, where we store information  
+-- about the statements we're analyzing.
+
+CALL db2perf_quiet_drop('TABLE db2perf_plans_ranking')@
+CREATE TABLE db2perf_plans_ranking( 
+      EXPLAIN_REQUESTER VARCHAR(128),
+      EXPLAIN_TIME      TIMESTAMP,
+      SOURCE_NAME       VARCHAR(128),
+      SOURCE_SCHEMA     VARCHAR(128),
+      SOURCE_VERSION    VARCHAR(64),
+      STMTNO            INTEGER,
+      SECTNO    	INTEGER,
+      short_text        VARCHAR(100),
+      total_ranking     INTEGER,
+      io_ranking        INTEGER )@
+
+
+-----------------------------------------------------------------------
+-- db2perf_plans
+-----------------------------------------------------------------------
+
+CREATE PROCEDURE db2perf_plans()
+DYNAMIC RESULT SETS 1
+BEGIN
+  DECLARE line INTEGER DEFAULT 0;
+  
+  DECLARE start 	      INTEGER;
+  DECLARE done  	      INTEGER;
+  DECLARE stmt_buffer 	      VARCHAR(100);
+
+  DECLARE row_number 	      SMALLINT;
+  DECLARE v_explain_requester VARCHAR(128);
+  DECLARE v_explain_time      TIMESTAMP;
+  DECLARE v_source_name       VARCHAR(128);
+  DECLARE v_source_schema     VARCHAR(128);
+  DECLARE v_source_version    VARCHAR(64);
+  DECLARE v_stmtno            INTEGER;
+  DECLARE v_sectno	      INTEGER;
+  DECLARE v_total_cost        DOUBLE;
+  DECLARE v_io_cost           DOUBLE;
+
+  DECLARE total_ranking SMALLINT;
+  DECLARE io_ranking    SMALLINT;
+  DECLARE short_text    VARCHAR(100);
+
+  DECLARE short_schema_source CHAR(32);
+  DECLARE statement_text      CLOB(2M);
+
+  DECLARE table_name   VARCHAR(128);
+  DECLARE schema       VARCHAR(128);
+  DECLARE index_name   VARCHAR(128);
+  DECLARE count        INTEGER;
+  DECLARE header_done  INTEGER;
+  
+  DECLARE statement VARCHAR(1280);
+  DECLARE SQLSTATE CHAR(5);
+  DECLARE STREAM_COUNT DOUBLE;
+  DECLARE at_end INT DEFAULT 0;
+   
+  ----------------------------------------------------------------------
+  -- rule 1:Declare a cursor to fetch statement which use tbscan to scan big table(rows > 1000)
+
+  DECLARE TBSCAN CURSOR FOR
+  Select CAST( row_number() OVER (ORDER BY a.EXPLAIN_TIME DESC) AS SMALLINT) as row_num,
+	a.explain_requester,
+	a.explain_time,
+	a.source_name,
+	a.source_schema,
+	a.source_version,
+	a.STMTNO,
+	a.SECTNO,
+	STATEMENT_TEXT from        
+	EXPLAIN_STREAM a,EXPLAIN_OPERATOR b,EXPLAIN_STATEMENT c
+	where a.EXPLAIN_TIME=b.EXPLAIN_TIME
+	and a.EXPLAIN_TIME=c.EXPLAIN_TIME
+	and a.STMTNO=b.STMTNO
+	and a.STMTNO=c.STMTNO
+	and a.SECTNO=b.SECTNO
+	and a.SECTNO=c.SECTNO
+	and a.TARGET_ID=b.OPERATOR_ID
+	and c.explain_level = 'O'
+	and STREAM_COUNT > 1000
+	and OPERATOR_TYPE='TBSCAN';
+
+  ----------------------------------------------------------------------
+  -- rule 2:Declare a cursor to fetch the complex statements which operation greater then 50
+
+  DECLARE COMP_SQL CURSOR FOR
+    SELECT 
+        CAST( row_number() OVER (ORDER BY a.EXPLAIN_TIME DESC) AS SMALLINT) as row_num,
+	b.explain_requester,
+	b.explain_time,
+	b.source_name,
+	b.source_schema,
+	b.source_version,
+	b.stmtno,
+	b.sectno,
+  b.statement_text   from   
+	EXPLAIN_OPERATOR a,EXPLAIN_STATEMENT b
+	where a.EXPLAIN_TIME=b.EXPLAIN_TIME
+	and a.STMTNO=b.STMTNO
+	and a.SECTNO=b.SECTNO
+	and b.explain_level     = 'O'
+	and OPERATOR_TYPE='RETURN'
+	and OPERATOR_ID > 50;
+	
+	----------------------------------------------------------------------
+  -- rule 3:Declare a cursor to fetch the sort overflow statements 
+	DECLARE SORT_OVERFLOW CURSOR FOR
+    SELECT 
+        CAST( row_number() OVER (ORDER BY a.EXPLAIN_TIME DESC) AS SMALLINT) as row_num, 
+	a.explain_requester,
+	a.explain_time,
+	a.source_name,
+	a.source_schema,
+	a.source_version,
+	a.stmtno,
+	a.sectno,
+	c.statement_text  from
+	(select explain_requester,
+	explain_time,
+	source_name,
+	source_schema,
+	source_version,
+	stmtno,
+	sectno,OPERATOR_ID,IO_COST from EXPLAIN_OPERATOR where OPERATOR_TYPE='SORT') a,
+	(select explain_requester,
+	explain_time,
+	source_name,
+	source_schema,
+	source_version,
+	stmtno,
+	sectno,	OPERATOR_ID,IO_COST from EXPLAIN_OPERATOR ) b,EXPLAIN_STATEMENT c
+	where 
+	a.explain_requester=b.explain_requester
+	and a.explain_requester=c.explain_requester
+	and a.explain_time=b.explain_time
+	and a.explain_time=c.explain_time
+	and a.source_name=b.source_name  
+	and a.source_name=c.source_name   
+	and a.source_schema=b.source_schema  
+	and a.source_version=b.source_version 
+	and a.stmtno=b.stmtno         
+	and a.sectno=b.sectno
+	and a.source_schema=c.source_schema  
+	and a.source_version=c.source_version 
+	and a.stmtno=c.stmtno         
+	and a.sectno=c.sectno
+	and a.OPERATOR_ID=b.OPERATOR_ID-1      
+	and a.IO_COST > b.IO_COST ;
+	
+	----------------------------------------------------------------------
+  -- rule 4:Declare a cursor to fetch the statements which index output rows less then 1  
+	DECLARE BAD_CARD CURSOR FOR
+	Select distinct
+  substr(c.OBJECT_SCHEMA,1,20),
+  substr(c.OBJECT_NAME,1,30),
+  STREAM_COUNT from        
+  EXPLAIN_STREAM a,EXPLAIN_OPERATOR b,EXPLAIN_OBJECT c
+  where a.EXPLAIN_TIME=b.EXPLAIN_TIME
+  and a.EXPLAIN_TIME=c.EXPLAIN_TIME
+  and a.explain_requester=b.explain_requester
+  and a.explain_requester=c.explain_requester
+  and a.source_name=b.source_name
+  and a.source_name=c.source_name
+  and a.STMTNO=b.STMTNO
+  and a.STMTNO=c.STMTNO
+  and a.SECTNO=b.SECTNO
+  and a.SECTNO=c.SECTNO
+  and a.TARGET_ID=b.OPERATOR_ID
+  and a.STREAM_COUNT < 1 
+  and a.STREAM_COUNT <> 0
+  and OPERATOR_TYPE='IXSCAN'
+  and c.OBJECT_TYPE='TA'
+  and c.OBJECT_SCHEMA not like 'SYS%';
+	
+  DECLARE ranking_cursor CURSOR FOR
+  SELECT
+    total_ranking,
+    io_ranking,
+    short_text
+  FROM db2perf_plans_ranking
+  ORDER BY total_ranking, io_ranking;
+
+	----------------------------------------------------------------------
+  -- rule 5:Declare a cursor to fetch the statements which more then 6 tables join  
+	DECLARE MANY_TABLE CURSOR FOR
+  select CAST( row_number() OVER (ORDER BY b.EXPLAIN_TIME DESC) AS SMALLINT) as row_num,
+	b.explain_requester,
+	b.explain_time,
+	b.source_name,
+	b.source_schema,
+	b.source_version,
+	b.STMTNO,b.SECTNO,STATEMENT_TEXT  from 
+	     (select EXPLAIN_TIME,STMTNO,SECTNO,source_name,source_schema,source_version from 
+				EXPLAIN_OBJECT where OBJECT_TYPE='TA'   
+				group by EXPLAIN_TIME,STMTNO,SECTNO,source_name,source_schema,source_version,OBJECT_TYPE having count(*) > 6) a,EXPLAIN_STATEMENT b
+				where a.EXPLAIN_TIME=b.EXPLAIN_TIME
+				and a.source_name=b.source_name
+				and a.source_schema=b.source_schema
+				and a.source_version=b.source_version
+				and a.STMTNO=b.STMTNO
+				and a.SECTNO=b.SECTNO
+				and b.explain_level     = 'O';
+  
+  ----------------------------------------------------------------------
+  -- rule 6: not used index
+  -- The following 3 cursors are used to find the tables referred to
+  -- in the plans, the indexes defined on them, and then the indexes
+  -- that aren't actually used in the plans here.
+
+  DECLARE table_cursor CURSOR FOR
+    SELECT distinct object_schema, object_name
+    FROM   explain_object
+    WHERE  object_type = 'TA';
+
+  DECLARE defined_idx_cursor CURSOR FOR
+    SELECT indname
+    FROM   syscat.indexes
+    WHERE  tabname   = table_name
+      AND  tabschema = schema;
+  
+  DECLARE unused_idx_cursor CURSOR FOR
+    SELECT distinct object_name
+    FROM   explain_object
+    WHERE  object_type = 'IX'
+      AND  object_name = index_name
+      AND  object_schema = schema;
+
+  DECLARE report_cursor CURSOR WITH RETURN TO CALLER FOR
+    SELECT message
+    FROM db2perf_plans_report
+    ORDER BY line;
+ 
+  DECLARE CONTINUE HANDLER FOR NOT FOUND
+    SET at_end = 1;
+
+  DELETE FROM db2perf_plans_report;
+  DELETE FROM db2perf_plans_ranking;
+
+  OPEN TBSCAN;
+
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, '----------------------------------------- Large TBSCAN Statements (Absence Index) -----------------------------------------');  
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Package  Section       Statment                               ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 
+	'---------------------------------------------------------------------------------------------------------------------------' ); 
+  SET line=line+1;
+
+  SET at_end = 0;
+  FETCH TBSCAN 
+    INTO row_number,
+	 v_explain_requester,
+	 v_explain_time,
+	 v_source_name,
+	 v_source_schema,
+	 v_source_version,
+	 v_stmtno,
+	 v_sectno,
+	 statement_text;
+
+  WHILE at_end = 0 DO
+    ----------------------------------------------------------------------
+    -- For each of the statements in the top 10, write its information to the ranking table.
+
+  INSERT INTO db2perf_plans_ranking
+	VALUES ( v_explain_requester, 
+		 v_explain_time, 
+		 v_source_name, 
+		 v_source_schema, 
+		 v_source_version, 
+		 v_stmtno, 
+		 v_sectno, 
+		 substr(statement_text,1,100), 
+		 row_number,
+		 NULL );
+
+    ----------------------------------------------------------------------
+    -- One by one, write the details about the top 10 total cost statements
+    -- to the output table.
+
+    SET short_schema_source = rtrim( substr(v_source_schema,1,16)) || '.' || rtrim( substr(v_source_name,1,16));
+    INSERT INTO db2perf_plans_report VALUES ( line,
+    v_source_name
+    ||'    '||  char(v_sectno) );    SET line=line+1;
+
+    SET start = 1;
+    SET done  = 0;
+    SET stmt_buffer = substr(statement_text,start,100);
+
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+    
+    ----------------------------------------------------------------------
+    -- Often times the most expensive statements are very long too, so we
+    -- write out the statement text in pieces, 100 bytes at a time.
+                           
+    WHILE done = 0 DO
+      INSERT INTO db2perf_plans_report VALUES
+	    ( line, '                       ' || rtrim(ltrim(stmt_buffer)) );
+      SET line = line+1;
+
+      IF start+100 >= length(statement_text) THEN
+	SET done = 1;
+      ELSE
+        ----------------------------------------------------------------------
+	-- Not done yet - get the next piece.
+		SET start = start + 100;
+		SET stmt_buffer = substr(statement_text,start,100);
+      END IF;
+
+    END WHILE;
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+
+    ----------------------------------------------------------------------
+    -- The previous statement is done, get the next one.
+    FETCH TBSCAN 
+      INTO row_number,
+	   v_explain_requester,
+	   v_explain_time,
+	   v_source_name,
+	   v_source_schema,
+	   v_source_version,
+	   v_stmtno,
+	   v_sectno,
+	   statement_text;
+
+  END WHILE;
+
+  CLOSE TBSCAN;
+
+
+
+  ----------------------------------------------------------------------
+  -- Repeat the above process with the top 10 statements in IO cost.
+
+  OPEN COMP_SQL;
+
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, '--------------------------------------------- Statments which is more complex ---------------------------------------------' );  
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Package  Section       Statment                               ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 
+	'---------------------------------------------------------------------------------------------------------------------------' ); 
+  SET line=line+1;
+
+  SET at_end = 0;
+  FETCH COMP_SQL 
+    INTO row_number,
+	 v_explain_requester,
+	 v_explain_time,
+	 v_source_name,
+	 v_source_schema,
+	 v_source_version,
+	 v_stmtno,
+	 v_sectno,
+	 statement_text;
+
+  WHILE at_end = 0 DO
+
+    ----------------------------------------------------------------------
+    -- Above, for total cost, we inserted rows into the ranking table for the top 10.
+    -- Here, we start by assuming the "top N" row in IO is alrady in the ranking
+    -- table, and we can update it (to record the ranking in terms of IO.)  
+    -- If the update fails, we insert.
+
+    UPDATE db2perf_plans_ranking r
+		SET   r.io_ranking        = row_number
+		WHERE r.explain_requester = v_explain_requester
+	  AND r.explain_time      = v_explain_time
+	  AND r.source_name       = v_source_name
+	  AND r.source_schema     = v_source_schema
+	  AND r.source_version    = v_source_version
+	  AND r.stmtno            = v_stmtno
+	  AND r.sectno            = v_sectno;
+
+    IF at_end = 1 THEN
+      INSERT INTO db2perf_plans_ranking
+	  VALUES ( v_explain_requester, 
+		   v_explain_time, 
+		   v_source_name, 
+		   v_source_schema, 
+		   v_source_version, 
+		   v_stmtno, 
+		   v_sectno, 
+		   substr(statement_text,1,100), 
+		   NULL,
+		   row_number );
+    END IF;
+
+    SET short_schema_source = rtrim( substr(v_source_schema,1,16)) || '.' || rtrim( substr(v_source_name,1,16));
+    
+    INSERT INTO db2perf_plans_report VALUES ( line,
+    v_source_name
+    ||'    '||  char(v_sectno) );    SET line=line+1;
+
+    SET start = 1;
+    SET done  = 0;
+    SET stmt_buffer = substr(statement_text,start,100);
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+
+    ----------------------------------------------------------------------
+    -- Insert the wrapped statement text as well
+
+    WHILE done = 0 DO
+      INSERT INTO db2perf_plans_report VALUES
+	    ( line, '                       ' || rtrim(ltrim(stmt_buffer)) );
+      SET line = line+1;
+
+      IF start+100 >= length(statement_text) THEN
+	SET done = 1;
+      ELSE
+	SET start = start + 100;
+	SET stmt_buffer = substr(statement_text,start,100);
+      END IF;
+
+    END WHILE;
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+
+    FETCH COMP_SQL 
+      INTO row_number,
+	 v_explain_requester,
+	 v_explain_time,
+	 v_source_name,
+	 v_source_schema,
+	 v_source_version,
+	 v_stmtno,
+	 v_sectno,
+	 statement_text;
+
+  END WHILE;
+  CLOSE COMP_SQL;
+
+  -----------------------------------------------------------------------------------------------------------------------
+	OPEN SORT_OVERFLOW;
+
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, '-------------------------------------------- Statments which is Sort Overflow ---------------------------------------------');  
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Package  Section       Statment                               ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 
+	'---------------------------------------------------------------------------------------------------------------------------' ); 
+  SET line=line+1;
+
+  SET at_end = 0;
+  FETCH SORT_OVERFLOW 
+    INTO row_number,
+	 v_explain_requester,
+	 v_explain_time,
+	 v_source_name,
+	 v_source_schema,
+	 v_source_version,
+	 v_stmtno,
+	 v_sectno,
+	 statement_text;
+
+  WHILE at_end = 0 DO
+    ----------------------------------------------------------------------
+    -- For each of the statements in the top 10, write its information to the ranking table.
+
+  INSERT INTO db2perf_plans_ranking
+	VALUES ( v_explain_requester, 
+		 v_explain_time, 
+		 v_source_name, 
+		 v_source_schema, 
+		 v_source_version, 
+		 v_stmtno, 
+		 v_sectno, 
+		 substr(statement_text,1,100), 
+		 row_number,
+		 NULL );
+
+    ----------------------------------------------------------------------
+    -- One by one, write the details about the top 10 total cost statements
+    -- to the output table.
+
+    SET short_schema_source = rtrim( substr(v_source_schema,1,16)) || '.' || rtrim( substr(v_source_name,1,16));
+    INSERT INTO db2perf_plans_report VALUES ( line,
+    v_source_name
+    ||'    '||  char(v_sectno) );    SET line=line+1;
+
+    SET start = 1;
+    SET done  = 0;
+    SET stmt_buffer = substr(statement_text,start,100);
+
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+
+
+    ----------------------------------------------------------------------
+    -- Often times the most expensive statements are very long too, so we
+    -- write out the statement text in pieces, 100 bytes at a time.
+
+    WHILE done = 0 DO
+      INSERT INTO db2perf_plans_report VALUES
+	    ( line, '                       ' || rtrim(ltrim(stmt_buffer)) );
+      SET line = line+1;
+
+      IF start+100 >= length(statement_text) THEN
+	SET done = 1;
+      ELSE
+        ----------------------------------------------------------------------
+	-- Not done yet - get the next piece.
+	SET start = start + 100;
+	SET stmt_buffer = substr(statement_text,start,100);
+      END IF;
+
+    END WHILE;
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+
+    ----------------------------------------------------------------------
+    -- The previous statement is done, get the next one.
+    FETCH SORT_OVERFLOW 
+      INTO row_number,
+	   v_explain_requester,
+	   v_explain_time,
+	   v_source_name,
+	   v_source_schema,
+	   v_source_version,
+	   v_stmtno,
+	   v_sectno,
+	   statement_text;
+
+  END WHILE;
+
+  CLOSE SORT_OVERFLOW;
+  
+  
+  --------------------------------------------------------------------------------------
+  OPEN BAD_CARD;
+
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, '----------------------------------------------------- Table Need Runstats -------------------------------------------------');  
+
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Schema              Table                         Fetch Count                               ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 
+	'---------------------------------------------------------------------------------------------------------------------------' ); 
+  SET line=line+1;
+
+  SET at_end = 0;
+  FETCH BAD_CARD 
+    INTO 
+	 v_source_schema,
+	 v_source_name,
+	 STREAM_COUNT
+	 ;
+
+  WHILE at_end = 0 DO
+    ----------------------------------------------------------------------
+    -- For each of the statements in the top 10, write its information to the ranking table.
+
+  INSERT INTO db2perf_plans_ranking
+	VALUES ( v_explain_requester, 
+		 v_explain_time, 
+		 v_source_name, 
+		 v_source_schema, 
+		 v_source_version, 
+		 v_stmtno, 
+		 v_sectno, 
+		 substr(statement_text,1,100), 
+		 row_number,
+		 NULL );
+
+    ----------------------------------------------------------------------
+    -- One by one, write the details about the top 10 total cost statements
+    -- to the output table.
+
+    SET short_schema_source = rtrim( substr(v_source_schema,1,16)) || '.' || rtrim( substr(v_source_name,1,16));
+   INSERT INTO db2perf_plans_report VALUES ( line,
+    v_source_schema || v_source_name ||  char(STREAM_COUNT) );    SET line=line+1;
+
+    ----------------------------------------------------------------------
+    -- The previous statement is done, get the next one.
+		FETCH BAD_CARD 
+    INTO 
+		 v_source_schema,
+		 v_source_name,
+		 STREAM_COUNT
+	 ;
+
+  END WHILE;
+
+  CLOSE BAD_CARD;
+  
+  ----------------------------------------------------------------------------------
+  OPEN MANY_TABLE;
+
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, '------------------------------------- Statement which have Too Many Table Join  -------------------------------------------');  
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Package  Section       Statment                               ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 
+	'---------------------------------------------------------------------------------------------------------------------------' ); 
+  SET line=line+1;
+
+  SET at_end = 0;
+  FETCH MANY_TABLE 
+    INTO row_number,
+	 v_explain_requester,
+	 v_explain_time,
+	 v_source_name,
+	 v_source_schema,
+	 v_source_version,
+	 v_stmtno,
+	 v_sectno,
+	 statement_text;
+
+  WHILE at_end = 0 DO
+    ----------------------------------------------------------------------
+    -- For each of the statements in the top 10, write its information to the ranking table.
+
+  INSERT INTO db2perf_plans_ranking
+	VALUES ( v_explain_requester, 
+		 v_explain_time, 
+		 v_source_name, 
+		 v_source_schema, 
+		 v_source_version, 
+		 v_stmtno, 
+		 v_sectno, 
+		 substr(statement_text,1,100), 
+		 row_number,
+		 NULL );
+
+    ----------------------------------------------------------------------
+    -- One by one, write the details about the top 10 total cost statements
+    -- to the output table.
+
+    SET short_schema_source = rtrim( substr(v_source_schema,1,16)) || '.' || rtrim( substr(v_source_name,1,16));
+   INSERT INTO db2perf_plans_report VALUES ( line,
+    v_source_name
+    ||'    '||  char(v_sectno) );    SET line=line+1;
+
+    SET start = 1;
+    SET done  = 0;
+    SET stmt_buffer = substr(statement_text,start,100);
+
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+
+
+    ----------------------------------------------------------------------
+    -- Often times the most expensive statements are very long too, so we
+    -- write out the statement text in pieces, 100 bytes at a time.
+
+    WHILE done = 0 DO
+      INSERT INTO db2perf_plans_report VALUES
+	    ( line, '                       ' || rtrim(ltrim(stmt_buffer)) );
+      SET line = line+1;
+
+      IF start+100 >= length(statement_text) THEN
+	SET done = 1;
+      ELSE
+        ----------------------------------------------------------------------
+	-- Not done yet - get the next piece.
+	SET start = start + 100;
+	SET stmt_buffer = substr(statement_text,start,100);
+      END IF;
+
+    END WHILE;
+
+    INSERT INTO db2perf_plans_report VALUES ( line,' ' ); SET line=line+1;
+
+    ----------------------------------------------------------------------
+    -- The previous statement is done, get the next one.
+    FETCH MANY_TABLE 
+      INTO row_number,
+	   v_explain_requester,
+	   v_explain_time,
+	   v_source_name,
+	   v_source_schema,
+	   v_source_version,
+	   v_stmtno,
+	   v_sectno,
+	   statement_text;
+
+  END WHILE;
+
+  CLOSE MANY_TABLE;
+  
+  ----------------------------------------------------------------------
+  -- Now that we have Top 10 by total cost and IO cost determined
+  -- and recorded, we can go back and pull out the Top 10 overall.
+  -- That is, statements that are in the union of these sets.
+
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, '--------------------------------------- Comparative ranking by total cost & I/O cost --------------------------------------' );  
+
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 				 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Total I/O' );             
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Cost  Cost' );            
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 'Rank  Rank            Statement' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 
+	'---------------------------------------------------------------------------------------------------------------------------' ); 
+  SET line=line+1;
+
+
+  OPEN ranking_cursor;
+
+  SET at_end = 0;
+  FETCH ranking_cursor 
+    INTO total_ranking,io_ranking,short_text;
+
+  WHILE at_end = 0 DO
+    
+    INSERT INTO db2perf_plans_report VALUES ( line,
+	COALESCE( CHAR( total_ranking ), '      ' )
+    ||  COALESCE( CHAR( io_ranking ), '      ' )
+    || '          ' ||short_text );
+    SET line=line+1;
+
+    FETCH ranking_cursor 
+      INTO total_ranking,io_ranking,short_text;
+  END WHILE;
+
+  CLOSE ranking_cursor;
+
+
+  ----------------------------------------------------------------------
+  -- Now we report all unused indexes
+
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, '------------------------------------- Tables with unreferenced indexes in these plans -------------------------------------' );  
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, ' ' ); 
+  SET line=line+1;
+  INSERT INTO db2perf_plans_report 
+  	VALUES ( line, 
+	'---------------------------------------------------------------------------------------------------------------------------' ); 
+  SET line=line+1;
+
+
+  OPEN table_cursor;
+
+  SET at_end = 0;
+  FETCH table_cursor 
+    INTO schema,table_name;
+
+  WHILE at_end = 0 DO
+
+    ----------------------------------------------------------------------
+    -- For each table listed in the explain tables, get all defined indexes
+
+    SET header_done=0;
+
+    OPEN defined_idx_cursor;
+
+    FETCH defined_idx_cursor
+      INTO index_name;
+
+    WHILE at_end = 0 DO
+
+      ----------------------------------------------------------------------
+      -- For each table and index, we see how many times that index was referred to.
+
+      SELECT count(*)
+      into   count
+      FROM   explain_object
+      WHERE  object_type   = 'IX'
+	AND  object_name   = index_name;
+           
+      IF count = 0 THEN
+   
+        ----------------------------------------------------------------------
+	-- We found an index that isn't used, even though its base table is referred to.
+	-- Report the unused index name.  
+  
+	IF header_done = 0 THEN
+	  INSERT INTO db2perf_plans_report 
+	  	VALUES ( line,'Table: '||substr(rtrim(schema)||'.'||rtrim(table_name),1,80) );
+	  SET line=line+1;
+	  SET header_done=1;
+	END IF;
+
+     INSERT INTO db2perf_plans_report VALUES 
+		( line,'       '||substr(rtrim(index_name),1,80) );
+	SET line=line+1;
+
+ 
+  
+      END IF;    SET at_end = 0;
+      FETCH defined_idx_cursor INTO
+	index_name;
+    END WHILE;
+
+    CLOSE defined_idx_cursor;
+
+    SET at_end = 0;
+    FETCH table_cursor 
+      INTO schema,table_name;
+
+  END WHILE;
+
+  CLOSE table_cursor;
+
+  OPEN report_cursor;
+
+END@

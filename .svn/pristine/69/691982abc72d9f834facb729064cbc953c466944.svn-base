@@ -1,0 +1,12 @@
+#oracle DBA 的数据库检查项 
+get_dbtime                        # 1.	DBtime近一周变化趋势及上一周对比(适用10以上版本)
+get_iops                          # 2.	IO MBPS近一周变化趋势及上一周对比(适用10以上版本)
+get_minipack_ecifdb1                      # 3.	IO 性能(minipack)变化趋势
+get_nostats_indexsubpart         #缺少统计信息的索引子分区
+get_nostats_indexpart             #缺少统计信息的索引分区
+get_nostats_index                 #缺少统计信息的索引
+get_nostats_tablesubpart          #缺少统计信息的表子分区
+get_nostats_tablepart              #缺少统计信息的表分区
+get_nostats_table            #  缺少统计信息的表
+get_sys_invalidobjs              #系统失效对象
+get_app_invalidobjs              #应用失效对象

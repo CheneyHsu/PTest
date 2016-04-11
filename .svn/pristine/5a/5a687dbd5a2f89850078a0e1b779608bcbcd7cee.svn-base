@@ -1,0 +1,22 @@
+#!/usr/bin/expect
+# 许成林
+# 2015-03
+# Version 1.0
+# make hadoop ssh key
+##############################################################
+
+#!/usr/bin/expect-f
+set ipaddress [lindex $argv 0]
+set port [lindex $argv 1]
+set username [lindex $argv 2]
+set passwd [lindex $argv 3]
+set timeout 30
+spawn ssh $ipaddress -p $port -l $username
+expect {
+"yes/no" {send "yes\r";exp_continue }
+"password:" { send "$passwd\r" }
+}
+expect -re "\](\$|#) "
+send "scp -r /tmp/sshkey/ 192.168.x.1\r"
+expect -re "\](\$|#) "
+send "exit\r"

@@ -1,0 +1,26 @@
+/*****************  MUTEX : CURSOR: PIN S WAIT ON X ******************/
+
+SELECT decode(trunc(&&P2/4294967296),
+           0,trunc(&&P2/65536),
+	     trunc(&&P2/4294967296)) SID_HOLDING_MUTEX
+ FROM dual;
+
+SELECT decode(trunc(&&P3/4294967296),
+	    0,trunc(&&P3/65536),
+	      trunc(&&P3/4294967296)) LOCATION_ID
+ FROM dual;
+
+
+SELECT sid,event,state,sql_hash_value p1,
+       decode(trunc(p2/4294967296),0,trunc(p2/65536),trunc(P2/4294967296)) SID_HOLDING_MUTEX,
+       decode(trunc(P3/4294967296),0,trunc(P3/65536),trunc(P3/4294967296)) LOCATION_ID,
+       p2raw hexP2
+ FROM v$session
+ where event in ('cursor: pin S','cursor: pin S wait on X') or event like 'cursor: pin%'
+
+
+SELECT MUTEX_TYPE, LOCATION,sleeps,WAIT_TIME
+   FROM x$mutex_sleep
+  WHERE mutex_type like 'Cursor Pin%' 
+    and location_id='&&LOCATION_ID'; 
+

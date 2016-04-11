@@ -1,0 +1,924 @@
+-----------------------------------------------------------------------
+--(c) Copyright IBM Corporation 2006  All rights reserved.           --
+--                                                                   --
+--This sample program is owned by International Business Machines    --
+--Corporation or one of its subsidiaries ("IBM") and is copyrighted  --
+--and licensed, not sold.                                            --
+--BY ACCESSING, COPYING, OR USING THIS SAMPLE PROGRAM, YOU AGREE TO  --
+--THE TERMS OF THE AGREEMENT TITLED "International License Agreement --
+--for Non-Warranted db2perf Programs" LOCATED IN THE FILE NAMED      --
+--"license.txt".                                                     --
+--                                                                   --
+-- db2perf_bp.db2                                                    --
+-- Hong Ye -- hongye@hrbb.com.cn                                     --
+--                                                                   --
+-- Collects snapshot data for bufferpools, and writes messages about --
+-- potential problems to a message table, db2perf_msg                --
+--                                                                   --
+-----------------------------------------------------------------------
+
+
+----------------------------------------------------------------------
+-- db2perf_quiet_drop
+--
+-- Executes an SQL 'DROP', suppressing the 'not found' error if it occurs.
+-- Useful for avoiding spurious errors when doing DROPs in setup scripts.
+-- Prepends the 'DROP' verb to the statement, so the statement passed in
+-- is something like 
+--     CALL db2perf_quiet_drop( 'table foo' )
+-- which executes "DROP table foo"
+----------------------------------------------------------------------
+
+DROP PROCEDURE db2perf_quiet_drop( VARCHAR(1000) )@
+
+ECHO Creating db2perf_quiet_drop@
+
+CREATE PROCEDURE db2perf_quiet_drop( IN statement VARCHAR(1000) )
+LANGUAGE SQL
+BEGIN
+   DECLARE SQLSTATE CHAR(5);
+   DECLARE NotThere    CONDITION FOR SQLSTATE '42704';
+   DECLARE NotThereSig CONDITION FOR SQLSTATE '42883';
+
+   DECLARE EXIT HANDLER FOR NotThere, NotThereSig
+      SET SQLSTATE = '     ';
+
+   SET statement = 'DROP ' || statement;
+   EXECUTE IMMEDIATE statement;
+END@
+
+
+
+----------------------------------------------------------------------
+-- db2perf_crmsg
+--
+-- Creates a message table used for db2perf_bp.   Suppresses the 'already
+-- exists' error if necessary.
+----------------------------------------------------------------------
+
+CALL db2perf_quiet_drop( 'procedure db2perf_crmsg' )@
+
+ECHO Creating db2perf_crmsg@
+
+CREATE PROCEDURE db2perf_crmsg
+LANGUAGE SQL
+BEGIN
+
+   DECLARE statement1 VARCHAR(128);
+   DECLARE statement2 VARCHAR(12800);
+   DECLARE statement3 VARCHAR(12800);
+   DECLARE statement4 VARCHAR(12800);
+   DECLARE statement5 VARCHAR(12800);
+   DECLARE SQLSTATE CHAR(5);
+   DECLARE AlreadyThere CONDITION FOR SQLSTATE '42710';
+
+   DECLARE EXIT HANDLER FOR AlreadyThere
+      SET SQLSTATE = '     ';
+
+   SET statement1 = 'CREATE TABLE db2perf_msg ( ts timestamp, severity int, metric char(50), value char(16), Comments char(40) )';
+   EXECUTE IMMEDIATE statement1;
+   
+   SET statement2 = 'CREATE TABLE overall_snap_db like sysibmadm.snapdb';
+   EXECUTE IMMEDIATE statement2;
+   
+   SET statement3 = 'create table snap_buff like sysibmadm.snapbp';
+	 EXECUTE IMMEDIATE statement3;
+	 
+	 SET statement4 = 'create table snap_db_diff (snapshot_timestamp TIMESTAMP,pool_data_l_reads BIGINT,pool_index_l_reads BIGINT,pool_data_writes BIGINT,pool_index_writes BIGINT,pool_data_p_reads BIGINT,pool_index_p_reads BIGINT,pool_async_data_reads BIGINT, pool_async_index_reads BIGINT,pool_async_data_writes BIGINT, pool_async_index_writes BIGINT,pool_drty_pg_steal_clns BIGINT,POOL_NO_VICTIM_BUFFER BIGINT,commit_sql_stmts BIGINT,files_closed BIGINT,pool_write_time BIGINT,pool_read_time BIGINT,direct_write_time BIGINT,direct_read_time BIGINT,LOCK_WAIT_TIME BIGINT,TOTAL_SORT_TIME BIGINT,PREFETCH_WAIT_TIME BIGINT,LOG_READ_TIME_S BIGINT,LOG_WRITE_TIME_S BIGINT,ELAPSED_EXEC_TIME_S BIGINT,deadlocks	BIGINT,ROWS_SELECTED BIGINT,rows_read BIGINT,ROWS_DELETED BIGINT,rows_inserted BIGINT,rows_updated BIGINT)';
+	 EXECUTE IMMEDIATE statement4;
+   
+   SET statement5 = 'create table snap_buff_diff (bp_name char(20),pool_data_l_reads BIGINT,pool_index_l_reads BIGINT,pool_data_writes BIGINT,pool_index_writes BIGINT,pool_data_p_reads BIGINT,pool_index_p_reads BIGINT,pool_async_data_reads BIGINT,pool_async_index_reads BIGINT,pool_async_data_writes BIGINT,pool_async_index_writes BIGINT,POOL_NO_VICTIM_BUFFER BIGINT)';
+   EXECUTE IMMEDIATE statement5;
+   
+END @
+
+----------------------------------------------------------------------
+-- Drop & then (re)create the db2perf_bufferpool stored procedure.
+-- The drop is done via the db2perf_quiet_drop() routine, so that we
+-- avoid any error messages if it doesn't exit.
+-- Then call db2perf_crmsg() (defined in db2perf_utils.db2) to create
+-- the message table we'll use.
+-- need add overall performance & configuration of database
+
+
+CALL db2perf_quiet_drop('PROCEDURE db2perf_bufferpool')@
+
+CALL db2perf_crmsg()@
+
+insert into overall_snap_db (snapshot_timestamp,pool_data_l_reads ,pool_index_l_reads ,pool_data_writes ,pool_index_writes ,
+		pool_data_p_reads ,pool_index_p_reads ,pool_async_data_reads,pool_async_index_reads,pool_async_data_writes,
+		pool_async_index_writes,pool_drty_pg_steal_clns ,	POOL_NO_VICTIM_BUFFER ,commit_sql_stmts ,
+		files_closed ,pool_write_time ,	pool_read_time ,direct_write_time ,	direct_read_time ,LOCK_WAIT_TIME ,TOTAL_SORT_TIME ,
+		PREFETCH_WAIT_TIME ,LOG_READ_TIME_S,LOG_WRITE_TIME_S,ELAPSED_EXEC_TIME_S,deadlocks ,ROWS_SELECTED ,rows_read ,
+		ROWS_DELETED ,rows_inserted ,	rows_updated )   
+    values ('2000-01-01-00.00.00.000000',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)@
+
+CREATE PROCEDURE db2perf_database
+DYNAMIC RESULT SETS 1
+LANGUAGE SQL
+BEGIN
+   DECLARE current_ts TIMESTAMP;
+   DECLARE severity   CHAR(8);
+   DECLARE comments   CHAR(40);
+   
+   DECLARE SCORE                   BIGINT;
+   ------------------------------------------
+   --BP
+   
+   DECLARE data_l_reads            BIGINT;
+   DECLARE index_l_reads           BIGINT;
+   DECLARE data_and_index_writes   BIGINT;
+   DECLARE data_p_reads            BIGINT;
+   DECLARE index_p_reads           BIGINT;
+   DECLARE async_data_reads        BIGINT;
+   DECLARE async_index_reads       BIGINT;
+   DECLARE dirty_pg_steals         BIGINT;
+   DECLARE dirty_steals_per_10k_tx BIGINT;
+   DECLARE transactions            BIGINT;
+   DECLARE files_closed            BIGINT;
+   DECLARE files_closed_per_10k_tx BIGINT;
+   DECLARE novictim                BIGINT;
+   DECLARE novictim_per_10k_tx     BIGINT;
+   DECLARE rows_read               BIGINT;
+   DECLARE rows_select             BIGINT;
+   DECLARE rows_modified           BIGINT;
+   DECLARE SELECT_STMTS            BIGINT;
+   DECLARE UID_STMTS               BIGINT;
+   DECLARE rows_read_per_return    DECIMAL(10,2);
+   DECLARE rows_read_per_tx        DECIMAL(10,2);
+   DECLARE data_hr                 DECIMAL(10,2);
+   DECLARE idx_hr                  DECIMAL(10,2);
+   DECLARE page_clean_ratio        DECIMAL(10,2);
+   DECLARE data_prefetch_ratio     DECIMAL(10,2);
+   DECLARE index_prefetch_ratio    DECIMAL(10,2);
+   DECLARE bp_name 		   CHAR(16);
+   
+   ------------------------------------------
+   --time
+  
+   
+   DECLARE sort_time               DECIMAL(10,2);
+   DECLARE pool_read_time          DECIMAL(10,2);
+   DECLARE lock_wait_time          DECIMAL(10,2);
+   DECLARE pool_write_time         DECIMAL(10,2);
+   DECLARE prefetch_wait_time      DECIMAL(10,2);
+   DECLARE host_execute_time			 DECIMAL(10,2);
+   DECLARE direct_read_time        DECIMAL(10,2);
+   DECLARE direct_write_time       DECIMAL(10,2);
+   DECLARE log_read_time           DECIMAL(10,2);
+	 DECLARE log_write_time          DECIMAL(10,2);
+   
+   ------------------------------------------
+   --config
+   DECLARE bufferpage              BIGINT;
+   DECLARE SORTHEAP                BIGINT;
+   DECLARE SHEAPTHRES_SHR          BIGINT;
+   DECLARE logbufsz                BIGINT;
+   DECLARE ioservers               BIGINT;
+   DECLARE locklist                BIGINT;
+		
+
+   DECLARE at_end INT DEFAULT 0;
+
+   ----------------------------------------------------------------------
+   -- Declare a cursor against the snapshot_database table function to collect all
+   -- the overall bufferpool statistics we're going to want.
+
+   DECLARE overall CURSOR FOR
+     SELECT 
+        pool_data_l_reads,
+        pool_index_l_reads,
+	pool_data_writes+pool_index_writes,
+        pool_data_p_reads,
+        pool_index_p_reads,
+        pool_async_data_reads,
+        pool_async_index_reads,
+	pool_drty_pg_steal_clns,
+	POOL_NO_VICTIM_BUFFER,
+	commit_sql_stmts,
+	files_closed,
+	((((pool_data_l_reads  - pool_data_p_reads)) )*100.0/(pool_data_l_reads+1)) as data_hr,
+	((((pool_index_l_reads - pool_index_p_reads) ))*100.0/(pool_index_l_reads+1)) as idx_hr,
+	((((pool_async_data_writes + pool_async_index_writes)))*100.0/(pool_data_writes+pool_index_writes+1)) as page_clean_ratio,
+	(((	pool_async_data_reads ))*100.0/(pool_data_p_reads+1)) as data_prefetch_ratio,
+	(((	pool_async_index_reads))*100.0/(pool_index_p_reads+1)) as index_prefetch_ratio,
+	LOCK_WAIT_TIME/1000*100.0/ELAPSED_EXEC_TIME_S,
+	TOTAL_SORT_TIME/1000*100.0/ELAPSED_EXEC_TIME_S,
+	POOL_READ_TIME/1000*100.0/ELAPSED_EXEC_TIME_S,
+	POOL_WRITE_TIME/1000*100.0/ELAPSED_EXEC_TIME_S,
+	PREFETCH_WAIT_TIME/1000*100.0/ELAPSED_EXEC_TIME_S,
+	LOG_READ_TIME_S/1000 *1000 *100.0/ELAPSED_EXEC_TIME_S as LOG_READ_TIME_MS,
+	LOG_WRITE_TIME_S/1000 *1000 *100.0/ELAPSED_EXEC_TIME_S as LOG_WRITE_TIME_MS,
+	DIRECT_READ_TIME/1000*100.0/ELAPSED_EXEC_TIME_S,
+	DIRECT_WRITE_TIME/1000*100.0/ELAPSED_EXEC_TIME_S,
+	ELAPSED_EXEC_TIME_S,
+	ROWS_SELECTED,
+	ROWS_READ,
+	ROWS_DELETED+ROWS_INSERTED+ROWS_UPDATED as ROWS_MODIFIED
+	FROM snap_db_diff t;
+
+
+   ----------------------------------------------------------------------
+   -- Declare a cursor against the snapshot_bufferpool table function to collect all
+   -- per-bufferpool statistics.
+
+   DECLARE per_bufferpool CURSOR FOR
+     SELECT 
+ 	substr(bp_name,1,16),
+        pool_data_l_reads,
+        pool_index_l_reads,
+	pool_data_writes+pool_index_writes,
+        pool_data_p_reads,
+        pool_index_p_reads,
+        pool_async_data_reads,
+        pool_async_index_reads,
+	(((pool_data_l_reads - pool_data_p_reads)*100.0)/(pool_data_l_reads+1)) as data_hr,
+	(((pool_index_l_reads - pool_index_p_reads )*100.0)/(pool_index_l_reads+1) ) as idx_hr,
+	(((pool_async_data_writes + pool_async_index_writes )*100.0)/(pool_data_writes+pool_index_writes+1)) as page_clean_ratio,
+	(((pool_async_data_reads)*100.0)/(pool_data_p_reads+1)) as data_prefetch_ratio,
+	(((	pool_async_index_reads)*100.0)/(pool_index_p_reads+1)) as index_prefetch_ratio
+	FROM snap_buff_diff as t
+	where bp_name not like 'IBMSYSTEMBP%';
+
+   DECLARE bufferpage CURSOR FOR
+   SELECT SUBSTR(BP_NAME,1,15) AS BP_NAME, 
+   BP_CUR_BUFFSZ * PAGESIZE /1024.00/1024 as BPSIZE
+   FROM TABLE(SNAP_GET_BP_PART(CAST(NULL AS VARCHAR(128)),-1)) AS T,syscat.bufferpools a
+   where 
+   a.bpname =t.bp_name
+   and a.bpname not like 'IBMSYSTEMBP%';
+  
+
+	DECLARE score_cursor CURSOR FOR
+     SELECT 100+sum(severity) 
+     FROM db2perf_msg 
+     WHERE ts = current_ts
+     and comments = ''
+     and severity <= 0;
+
+   DECLARE msg_cursor CURSOR WITH RETURN TO CALLER FOR
+     SELECT * 
+     FROM db2perf_msg 
+     WHERE ts = current_ts
+     ORDER BY ts DESC, severity asc;
+
+   DECLARE CONTINUE HANDLER FOR NOT FOUND
+     SET at_end = 1; 
+
+
+
+   SET current_ts = current timestamp;
+
+
+   ----------------------------------------------------------------------
+   -- First open the cursor with the overall statis.
+   
+   insert into snap_db_diff
+		select t.snapshot_timestamp,
+		t.pool_data_l_reads - b.pool_data_l_reads,
+		t.pool_index_l_reads - b.pool_index_l_reads,
+		t.pool_data_writes - b.pool_data_writes,
+		t.pool_index_writes - b.pool_index_writes,
+		t.pool_data_p_reads - b.pool_data_p_reads,
+		t.pool_index_p_reads - b.pool_index_p_reads,
+		t.pool_async_data_reads-b.pool_async_data_reads,
+		t.pool_async_index_reads-b.pool_async_index_reads,
+		t.pool_async_data_writes-b.pool_async_data_writes,
+		t.pool_async_index_writes-b.pool_async_index_writes,
+		t.pool_drty_pg_steal_clns -b.pool_drty_pg_steal_clns,
+		t.POOL_NO_VICTIM_BUFFER -b.POOL_NO_VICTIM_BUFFER,
+		t.commit_sql_stmts -b.commit_sql_stmts,
+		t.files_closed -b.files_closed,
+		t.pool_write_time - b.pool_write_time,
+		t.pool_read_time - b.pool_read_time,
+		t.direct_write_time - b.direct_write_time,
+		t.direct_read_time - b.direct_read_time,
+		t.LOCK_WAIT_TIME - b.LOCK_WAIT_TIME,
+		t.TOTAL_SORT_TIME -b.TOTAL_SORT_TIME,
+		t.PREFETCH_WAIT_TIME -b.PREFETCH_WAIT_TIME,
+		t.LOG_READ_TIME_S-b.LOG_READ_TIME_S,
+		t.LOG_WRITE_TIME_S-b.LOG_WRITE_TIME_S,
+		t.ELAPSED_EXEC_TIME_S-b.ELAPSED_EXEC_TIME_S,
+		t.deadlocks - b.deadlocks,
+		t.ROWS_SELECTED - b.ROWS_SELECTED,
+		t.rows_read - b.rows_read ,
+		t.ROWS_DELETED - b.ROWS_DELETED,
+		t.rows_inserted - b.rows_inserted ,
+		t.rows_updated - b.rows_updated 
+		from sysibmadm.snapdb t,
+		(select * from overall_snap_db where snapshot_timestamp in (SELECT max(snapshot_timestamp) FROM overall_snap_db)) b;
+		
+		
+		
+		insert into snap_buff_diff 
+		SELECT substr(t.bp_name,1,16) ,
+		(t.pool_data_l_reads - b.pool_data_l_reads) ,
+		(t.pool_index_l_reads - b.pool_index_l_reads) ,
+		(t.pool_data_writes- b.pool_data_writes) ,
+		(t.pool_index_writes -b.pool_index_writes) ,
+		(t.pool_data_p_reads -b.pool_data_p_reads) ,
+		(t.pool_index_p_reads -b.pool_index_p_reads) ,
+		t.pool_async_data_reads-b.pool_async_data_reads,
+		t.pool_async_index_reads-b.pool_async_index_reads,
+		t.pool_async_data_writes-b.pool_async_data_writes,
+		t.pool_async_index_writes-b.pool_async_index_writes,
+		(t.POOL_NO_VICTIM_BUFFER -b.POOL_NO_VICTIM_BUFFER)
+		from sysibmadm.snapbp t,
+		(select * from snap_buff where snapshot_timestamp in (SELECT max(snapshot_timestamp) FROM snap_buff)) b
+		where b.bp_name=t.bp_name;
+
+   OPEN overall;
+   FETCH overall INTO data_l_reads, index_l_reads, data_and_index_writes, data_p_reads, index_p_reads, 
+		async_data_reads, async_index_reads, dirty_pg_steals,novictim, transactions,
+		files_closed,data_hr, idx_hr, page_clean_ratio, data_prefetch_ratio, index_prefetch_ratio,lock_wait_time,sort_time,
+		pool_read_time,pool_write_time,prefetch_wait_time,log_read_time,log_write_time,direct_read_time,direct_write_time,
+		host_execute_time,rows_select,rows_read,rows_modified;
+   CLOSE overall;
+
+
+	 ----------------------------------------------------------------------
+   -- If there are fewer than 1000 secends excute time, then there's not enough activity
+   -- in the system to come up with a judgment on whether the wait time is ok.
+   -- If there is enough activity, then we assign a severity based on the value
+   -- of the excute time.  
+		
+		SET comments = '';
+		
+		insert into db2perf_msg values 
+   	( current_ts, '0', 'Application Excute Time', cast(host_execute_time as char(16)), comments );
+		
+		SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (pool_read_time > 60) THEN
+	  SET severity = -5;
+        WHEN (pool_read_time > 30) THEN
+	  SET severity = -3;
+        WHEN (pool_read_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Pool Read Time Percent', cast(pool_read_time as char(16)),comments  );
+   	
+     SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (pool_write_time > 60) THEN
+	  SET severity = -5;
+        WHEN (pool_write_time > 30) THEN
+	  SET severity = -3;
+        WHEN (pool_write_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Pool Write Time Percent', cast(pool_write_time as char(16)), comments );
+
+   SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (sort_time > 60) THEN
+	  SET severity = -5;
+        WHEN (sort_time > 30) THEN
+	  SET severity = -3;
+        WHEN (sort_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Sort Time Percent', cast(sort_time as char(16)), comments );
+   	
+   	SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (lock_wait_time > 60) THEN
+	  SET severity = -5;
+        WHEN (lock_wait_time > 30) THEN
+	  SET severity = -3;
+        WHEN (lock_wait_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Lock Wait Time Percent', cast(lock_wait_time as char(16)), comments );
+   	
+   	
+   	  SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (log_read_time > 60) THEN
+	  SET severity = -5;
+        WHEN (log_read_time > 30) THEN
+	  SET severity = -3;
+        WHEN (log_read_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Log Read Time Percent', cast(log_read_time as char(16)), comments );
+   	
+    SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (log_write_time > 60) THEN
+	  SET severity = -5;
+        WHEN (log_write_time > 30) THEN
+	  SET severity = -3;
+        WHEN (log_write_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Log Write Time Percent', cast(log_write_time as char(16)), comments );
+   	
+     SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (direct_read_time > 60) THEN
+	  SET severity = -5;
+        WHEN (direct_read_time > 30) THEN
+	  SET severity = -3;
+        WHEN (direct_read_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Driect Read Time Percent', cast(direct_read_time as char(16)), comments );
+
+		SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (direct_write_time > 60) THEN
+	  SET severity = -5;
+        WHEN (direct_write_time > 30) THEN
+	  SET severity = -3;
+        WHEN (direct_write_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Driect Write Time Percent', cast(direct_write_time as char(16)), comments );
+   	
+     SET comments = '';
+    CASE 
+        WHEN (host_execute_time < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No Application activity';
+        WHEN (prefetch_wait_time > 60) THEN
+	  SET severity = -5;
+        WHEN (prefetch_wait_time > 30) THEN
+	  SET severity = -3;
+        WHEN (prefetch_wait_time > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   
+    -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Perfetch Wait Time Percent', cast(prefetch_wait_time as char(16)), comments );
+   	
+   	
+   insert into db2perf_msg values 
+   	( current_ts, '0', 'Rows Read', cast(rows_read as char(16)), '' );
+   	insert into db2perf_msg values 
+   	( current_ts, '0', 'Rows Selected', cast(rows_select as char(16)), '' );
+   	insert into db2perf_msg values 
+   ( current_ts, '0', 'Rows Modified', cast(rows_modified as char(16)), '' );
+   	
+   SET comments = '';
+   SET rows_read_per_tx = rows_read / (transactions+1);
+   CASE 
+        WHEN (transactions < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No transaction activity recorded';
+        WHEN (rows_read_per_tx > 1000 ) THEN
+	  SET severity = -5;
+        WHEN (rows_read_per_tx > 100) THEN
+	  SET severity = -3;
+        WHEN (rows_read_per_tx > 10) THEN
+	  SET severity = -1;
+	 ELSE
+   	  SET severity = 0;
+   END CASE;
+   
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Rows Read / Tx', cast(rows_read_per_tx as char(16)), comments );
+
+  
+   SET comments = '';
+   SET rows_read_per_return = rows_read / (rows_select + rows_modified) ;
+   CASE 
+        WHEN (rows_read < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No transaction activity recorded';
+        WHEN (rows_read_per_return > 1000) THEN
+	  SET severity = -5;
+        WHEN (rows_read_per_return > 100) THEN
+	  SET severity = -3;
+        WHEN (rows_read_per_return > 10) THEN
+	  SET severity = -1;
+	 ELSE
+   	  SET severity = 0;
+   END CASE;
+   
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Rows Read / Rows Return', cast(rows_read_per_return as char(16)), comments );
+   	
+   	
+
+   ----------------------------------------------------------------------
+   -- If there are fewer than 1000 logical reads, then there's not enough activity
+   -- in the system to come up with a judgment on whether the hit ratio is ok.
+   -- If there is enough activity, then we assign a severity based on the value
+   -- of the hit ratio.  For example, if the data hit ratio is under 60%, we 
+   -- consider that to be potentially a severe problem with severity 5.
+
+   SET comments = '';
+   CASE 
+        WHEN (data_l_reads < 1000) THEN
+	  SET severity = 0;
+	  SET comments = 'No data BP activity';
+        WHEN (data_hr < 60) THEN
+	  SET severity = -5;
+        WHEN (data_hr < 75) THEN
+	  SET severity = -3;
+        WHEN (data_hr < 90) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+
+   -- Insert the message with the severity, etc., into our report table.
+   -- All rows in the report table are marked with the current timestamp.
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Overall BP data hit ratio', cast(data_hr as char(16)), comments );
+
+
+   ----------------------------------------------------------------------
+   -- Repeat the process with the index hit ratio.
+   SET comments = '';
+   CASE 
+        WHEN (index_l_reads < 1000) THEN
+	  SET severity = 0;
+	  SET comments = 'No index BP activity';
+        WHEN (idx_hr < 75) THEN
+	  SET severity = -5;
+        WHEN (idx_hr < 85) THEN
+	  SET severity = -3;
+        WHEN (idx_hr < 95) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Overall BP index hit ratio', cast(idx_hr as char(16)), comments );
+
+
+   ----------------------------------------------------------------------
+   -- And the page clean ratio.  We define this as the ratio of page writes that are
+   -- synchronous (written by the agent, or triggered by a steal) to the writes that
+   -- are asynchronous (written by a cleaner.)
+   SET comments = '';
+   CASE 
+        WHEN (data_and_index_writes < 1000) THEN
+	  SET severity = 0;
+	  SET comments = 'No BP cleaning activity';
+        WHEN (page_clean_ratio < 40) THEN
+	  SET severity = -5;
+        WHEN (page_clean_ratio < 65) THEN
+	  SET severity = -3;
+        WHEN (page_clean_ratio < 90) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Overall BP page clean ratio', cast(page_clean_ratio as char(16)), comments );
+
+
+   ----------------------------------------------------------------------
+   -- And the data & index prefetch ratios.  We define this as the ratio of page reads that are
+   -- synchronous (read by the agent) to the reads that are asynchronous (read by a prefetcher.)
+   -- We assume that if there is no prefetch activity at all, this is probably a system doing
+   -- only random reads, so a prefetch ratio isn't too helpful to calculate.
+
+   SET comments = '';
+   CASE 
+        WHEN (async_data_reads < 1000) THEN
+	  SET severity = 0;
+	  SET comments = 'No data prefetching activity';
+        WHEN (data_prefetch_ratio < 50) THEN
+	  SET severity = -5;
+        WHEN (data_prefetch_ratio < 70) THEN
+	  SET severity = -3;
+        WHEN (data_prefetch_ratio < 90) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Overall BP data prefetch ratio', cast(data_prefetch_ratio as char(16)), comments );
+
+
+   SET comments = '';
+   CASE 
+        WHEN (async_index_reads < 1000) THEN
+	  SET severity = 0;
+	  SET comments = 'No index prefetching activity';
+        WHEN (index_prefetch_ratio < 50) THEN
+	  SET severity = -5;
+        WHEN (index_prefetch_ratio < 70) THEN
+	  SET severity = -3;
+        WHEN (index_prefetch_ratio < 90) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Overall BP index prefetch ratio', cast(index_prefetch_ratio as char(16)), comments );
+
+
+   ----------------------------------------------------------------------
+   -- A 'dirty steal' is the case where a new bufferpool page is required, and no
+   -- free or 'in use but unmodified' ones can be found.  So before the agent can
+   -- read the new data into the bufferpool, it has to write out the modified
+   -- data first.  This is very expensive, so our severity levels are quite strict.
+   -- Here we calculate number of steals per 10,000 transactions - more than 50
+   -- is considered a '5' severity.
+
+   SET comments = '';
+   SET dirty_steals_per_10k_tx = 10000 * dirty_pg_steals / (transactions+1);
+   CASE 
+        WHEN (transactions < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No transaction activity recorded';
+        WHEN (dirty_steals_per_10k_tx > 50) THEN
+	  SET severity = -5;
+        WHEN (dirty_steals_per_10k_tx > 20) THEN
+	  SET severity = -3;
+        WHEN (dirty_steals_per_10k_tx > 1) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Dirty Page Steals / 10k Tx', cast(dirty_steals_per_10k_tx as char(16)), comments );
+
+	 ----------------------------------------------------------------------
+   -- No Victim Available per 10k tx
+
+   SET comments = '';
+   SET novictim_per_10k_tx = 10000 * novictim / (transactions+1);
+   CASE 
+    WHEN (transactions < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No transaction activity recorded';
+        WHEN (novictim_per_10k_tx > 1000) THEN
+	  SET severity = -5;
+        WHEN (novictim_per_10k_tx > 100) THEN
+	  SET severity = -3;
+        WHEN (novictim_per_10k_tx > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'No Victim Available/ 10k Tx', cast(novictim_per_10k_tx as char(16)), comments );
+
+   ----------------------------------------------------------------------
+   -- When DB2 needs to open a new tablespace container file, it uses a file
+   -- handle to do it.  The operating system only has a limited supply of these,
+   -- so when they're all in use, DB2 has to close another file first, and then
+   -- reuse the handle.   This generally isn't too expensive unless the numbers
+   -- get quite high.  
+
+   SET comments = '';
+   SET files_closed_per_10k_tx = 10000 * files_closed / (transactions+1);
+   CASE 
+        WHEN (transactions < 100) THEN
+	  SET severity = 0;
+	  SET comments = 'No transaction activity recorded';
+        WHEN (files_closed_per_10k_tx > 1000) THEN
+	  SET severity = -5;
+        WHEN (files_closed_per_10k_tx > 100) THEN
+	  SET severity = -3;
+        WHEN (files_closed_per_10k_tx > 10) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+   END CASE;
+   insert into db2perf_msg values 
+   	( current_ts, severity, 'Files closed / 10k Tx', cast(files_closed_per_10k_tx as char(16)), comments );
+
+
+
+
+   ----------------------------------------------------------------------
+   -- Now we repeat the above measurements & messages for individual bufferpools.
+
+
+   SET at_end=0;
+   OPEN per_bufferpool;
+   FETCH per_bufferpool INTO 
+   	bp_name,data_l_reads,index_l_reads,data_and_index_writes,data_p_reads,index_p_reads, 
+	async_data_reads,async_index_reads,data_hr,idx_hr,page_clean_ratio,data_prefetch_ratio,
+	index_prefetch_ratio;
+
+   WHILE at_end = 0 DO
+
+     
+     ----------------------------------------------------------------------
+     -- Data hit ratio
+     SET comments = '';
+     CASE 
+        WHEN (data_l_reads < 1000) THEN
+	  SET severity = 0;
+	  SET comments = 'No data BP activity';
+        WHEN (data_hr < 60) THEN
+	  SET severity = -5;
+        WHEN (data_hr < 75) THEN
+	  SET severity = -3;
+        WHEN (data_hr < 90) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+     END CASE;
+     insert into db2perf_msg values 
+     	( current_ts, severity, rtrim(bp_name)||' data hit ratio', cast(data_hr as char(16)), comments );
+
+
+     ----------------------------------------------------------------------
+     -- Index hit ratio
+     SET comments = '';
+     CASE 
+        WHEN (index_l_reads < 1000) THEN
+	  SET severity = 0;
+	  SET comments = 'No index BP activity';
+        WHEN (idx_hr < 75) THEN
+	  SET severity = -5;
+        WHEN (idx_hr < 85) THEN
+	  SET severity = -3;
+        WHEN (idx_hr < 95) THEN
+	  SET severity = -1;
+	ELSE
+   	  SET severity = 0;
+     END CASE;
+     insert into db2perf_msg values 
+     	( current_ts, severity, rtrim(bp_name)||' idx hit ratio', cast(idx_hr as char(16)), comments );
+
+
+     ----------------------------------------------------------------------
+     -- Data prefetch ratio
+     SET comments = '';
+     CASE 
+	  WHEN (async_data_reads < 1000) THEN
+	    SET severity = 0;
+	    SET comments = 'No data prefetching activity';
+	  WHEN (data_prefetch_ratio < 50) THEN
+	    SET severity = -5;
+	  WHEN (data_prefetch_ratio < 70) THEN
+	    SET severity = -3;
+	  WHEN (data_prefetch_ratio < 90) THEN
+	    SET severity = -1;
+	  ELSE
+	    SET severity = 0;
+     END CASE;
+     insert into db2perf_msg values 
+     	( current_ts, severity, rtrim(bp_name)||' data pftch ratio', cast(data_prefetch_ratio as char(16)), comments );
+
+
+     ----------------------------------------------------------------------
+     -- Index prefetch ratio
+     SET comments = '';
+     CASE 
+	  WHEN (async_index_reads < 1000) THEN
+	    SET severity = 0;
+	    SET comments = 'No index prefetching activity';
+	  WHEN (index_prefetch_ratio < 50) THEN
+	    SET severity = -5;
+	  WHEN (index_prefetch_ratio < 70) THEN
+	    SET severity = -3;
+	  WHEN (index_prefetch_ratio < 90) THEN
+	    SET severity = -1;
+	  ELSE
+	    SET severity = 0;
+     END CASE;
+     insert into db2perf_msg values 
+     	( current_ts, severity, rtrim(bp_name)||' index pftch ratio', cast(index_prefetch_ratio as char(16)), comments );
+     
+     -- Get the data for the next bufferpool
+     FETCH per_bufferpool INTO 
+     	bp_name,data_l_reads,index_l_reads,data_and_index_writes,data_p_reads,index_p_reads, 
+			async_data_reads,async_index_reads,data_hr,idx_hr,page_clean_ratio,data_prefetch_ratio,
+			index_prefetch_ratio;
+   
+   END WHILE;
+
+   close per_bufferpool;
+   
+   
+   SET at_end=0;
+   SET comments = '';
+   open bufferpage;
+    
+   fetch bufferpage into bp_name,bufferpage;
+
+    WHILE at_end = 0 DO
+    SET comments = '';
+     CASE 
+	  WHEN (bufferpage < 100) THEN
+	    SET severity = -5;
+	  WHEN (bufferpage < 500) THEN
+	    SET severity = -3;
+	  WHEN (bufferpage < 1000) THEN
+	    SET severity = -1;
+	  ELSE
+	    SET severity = 0;
+     END CASE; 
+     
+     insert into db2perf_msg values                                                                                    
+	   ( current_ts, severity, rtrim(bp_name)||' buffer size', rtrim(cast(bufferpage as char(16)))||'MB', comments );
+ 
+    FETCH bufferpage INTO bp_name,bufferpage;
+    
+
+    END WHILE;
+
+   close bufferpage;
+   
+    SET comments = '';
+     open score_cursor;
+     fetch score_cursor into SCORE;
+     insert into db2perf_msg values
+           ( current_ts, SCORE, 'DATABASE SCORE', cast(SCORE as char(16)), comments );
+     close score_cursor;
+   
+   insert into overall_snap_db
+   select * from sysibmadm.snapdb;  
+  	 
+	 insert into snap_buff	
+	 select *																																																																																																		
+		FROM sysibmadm.snapbp																																																			
+	  where bp_name not like 'IBMSYSTEMBP%'; 	
+	 
+	 delete from snap_db_diff;
+	 delete from snap_buff_diff;
+	 
+   ----------------------------------------------------------------------
+   -- Now open the cursor to return a result set to the caller which has the new
+   -- rows added to the message table in this run.
+
+   OPEN msg_cursor;
+
+END @

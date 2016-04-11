@@ -1,0 +1,334 @@
+#!/usr/bin/env python
+import os,sys,getpass,pickle,time
+import parameter
+def inputs(prompt,err_prompt):
+	try:
+		number=input(prompt)
+	except KeyboardInterrupt:
+		sys.exit(0)
+	except :
+		print err_prompt
+		return
+	return number
+def login(card_number,account="account.txt"):
+###############
+#check account#
+###############
+	real_passwd=""
+	input_passwd=""
+	isCorrect=0
+	max_error_count=3
+
+	f=file(account,'r')
+	for i in f.readlines():
+		if "#" in i:
+			continue
+		if card_number==int(i.split()[0]):
+			isCorrect=1
+			real_passwd=i.split()[1]
+			break
+	f.close()
+	if not isCorrect:
+		print "\033[31mYour account is not correct!try again or quit\033[33m<ctrl+c>\033[0m"
+		return 2
+################
+#check password#
+################
+	errorCountFile=os.getcwd()+os.sep+str(card_number)+".errorCount"
+	if os.path.exists(errorCountFile):
+		f=file(errorCountFile,"r")
+		l=pickle.load(f)
+		errorCount=l[1]
+	else:
+		errorCount=0
+		f=file(errorCountFile,"w")
+		l=list()
+		l.append(card_number)
+		l.append(errorCount)
+		pickle.dump(l,f)
+		f.close()
+	while errorCount <max_error_count:
+		try:
+			input_passwd=getpass.getpass("Please enter your password:")
+		except KeyboardInterrupt:
+			sys.exit(0)
+			
+		if input_passwd != real_passwd:
+			errorCount+=1
+			f=file(errorCountFile,"w")
+			l=list()
+			l.append(card_number)
+			l.append(errorCount)
+			pickle.dump(l,f)
+			f.close()
+			print "Your password is not correct,you have \033[31m"+str(max_error_count-errorCount)+"\033[0m times to try again..."
+		else:
+#				print "Welcome to \033[32mPython Bank\033[0m!"
+			errorCount=0
+			parameter.account=card_number
+			f=file(errorCountFile,"w")
+			l=list()
+			l.append(card_number)
+			l.append(errorCount)
+			pickle.dump(l,f)
+			f.close()
+			return 1
+	else:
+		print "You had inputed "+str(max_error_count)+" times errors for password,your card have been locked,please call 95511,bye!"
+		return 100
+def unlock(card_number):
+	isCorrect=0
+	f=file("account.txt",'r')
+	for i in f.readlines():
+		if "#" in i:
+			continue
+		if card_number==int(i.split()[0]):
+			isCorrect=1
+			break
+	f.close()
+	if not isCorrect:
+		return 2
+#		print "\033[31mYour account is not correct!try again or quit\033[33m<ctrl+c>\033[0m"
+	errorCountFile=os.getcwd()+os.sep+str(card_number)+".errorCount"
+	errorCount=0
+	f=file(errorCountFile,"w")
+	l=list()
+	l.append(card_number)
+	l.append(errorCount)
+	pickle.dump(l,f)
+	f.close()
+	return 1
+#	print "\033[31munlock success!\033[0m"
+def balance_pickle():
+	if not os.path.exists("account.balance"):
+		dic_balance={}
+		for i in file("account.txt","r").readlines():
+			if "#" in i:
+				continue
+			card_number=int(i.split()[0])
+			balance=int(i.split()[3])
+			dic_balance[card_number]=balance
+		f=file("account.balance","w")
+		pickle.dump(dic_balance,f)
+		f.close()
+def transaction(account,tran_date,tran_type,amount,interest=0):
+	dic_balance=pickle.load(file("account.balance"))
+	if tran_type=="DrawMoney":
+		dic_balance[account]-=amount*(1+interest)
+       		pickle.dump(dic_balance,file("account.balance","w"))
+	elif tran_type=="Save":
+		dic_balance[account]+=amount
+		pickle.dump(dic_balance,file("account.balance","w"))
+	elif tran_type=="Shopping":
+		dic_balance[account]-=amount
+		pickle.dump(dic_balance,file("account.balance","w"))
+	
+def query():
+        f=file("account.txt","r")
+        for i in f.readlines():
+                if str(parameter.account) in i:
+                        parameter.account_credit=i.split()[2]
+                        break
+        balance_pickle()
+        dic_balance=pickle.load(file("account.balance","r"))
+        parameter.account_balance=dic_balance[parameter.account]
+
+def loger(account,tran_date,tran_type,amount,interest):
+	logfile="credit_account.log"
+	f=file(logfile,"a")
+	msg="%s %s %s %s %s\n"%(account,tran_date,tran_type,amount,interest)
+	f.write(msg)
+	f.close()
+	
+def account_menu():
+	print """
+        ##############################################
+        #      Welcome to personal management!       #
+        #                                            #
+        # 1 query      2 draw money                  #
+        # 3 save       4 print transaction record    #
+	# 5 return                                   #
+        #                                            #   
+        ##############################################
+        """
+	choice=-1
+	l=[1,2,3,4,5]
+	while choice not in l:
+                try:
+                        choice=input("Enter your choice "+str(l)+" ")
+                except KeyboardInterrupt:
+                        sys.exit(0)
+                except:
+                        print "\033[31mThe choice must be integer!\033[0m"
+        return choice
+def shopping_menu():
+	print "\n>Shopping List\n"
+	l=list()
+	f=file("shoppinglist.txt","r")
+	for string in f.readlines():
+		print string
+		l.append(int(string.split()[0]))
+	f.close()
+	print "Press 886 to exit!!!"
+	l.append(886)
+	choice=-1
+        while choice not in l:
+                try:
+                        choice=input("Enter your choice "+str(l)+" ")
+                except KeyboardInterrupt:
+                        sys.exit(0)
+                except:
+                        print "\033[31mThe choice must be integer!\033[0m"
+        return choice
+def menu():
+	print """
+	##############################################
+	#         Welcome to Python Bank!            #
+	#                                            #
+	# 1 login      2 shopping                    #
+	# 3 unlock     4 exit                        #
+	#                                            #   
+	##############################################
+	"""
+	choice=-1
+	l=[1,2,3,4]
+	while choice not in l:
+		try:
+			choice=input("Enter your choice "+str(l)+" ")
+		except KeyboardInterrupt:
+                        sys.exit(0)
+                except:
+                        print "\033[31mThe choice must be integer!\033[0m"
+	return choice
+
+
+#################
+# main entry    #
+#################
+while True:
+	choice=menu()
+	if choice==1:	
+		if parameter.account==0:
+			while True:
+				prompt="Please input your card number:"
+                		err_prompt="\033[31mCard number must ber integer!\033[0m"
+				card_number=inputs(prompt,err_prompt)
+				if card_number is not None:
+		 			if login(card_number)==1:
+						print "\nHi \033[31m"+str(parameter.account)+"\033[0m Welcome to \033[32mPython Bank\033[0m!"
+						break
+				
+		while True:
+			action=account_menu()
+			if action==5:
+				break
+			elif action==2:
+				query()
+                                print "\nDear \033[31m"+str(parameter.account)+"\033[0m,your credit is \033[31m"+str(parameter.account_credit)+"\033[0m,your balance is \033[31m"+str(parameter.account_balance)+"\033[0m!"
+				while True:
+					prompt="The interest is \033[31m%5\033[0m,Please enter the amount of money:"
+                        		err_prompt="\033[31mThe number must ber integer!\033[0m"
+                        		amount=inputs(prompt,err_prompt)
+					if amount is not None:
+						if amount*1.05 < parameter.account_balance:
+							now=time.strftime("%Y-%m-%d %H:%M:%S",time.localtime())	
+							transaction(parameter.account,now,"DrawMoney",amount,0.05)	
+							print "\nDraw Money Successfully!"
+							loger(parameter.account,now,"DrawMoney",amount,0.05)
+							break
+						else:
+							print "Total is \033[31m"+str(amount*1.05)+"\033[0m, Insufficient balance!Exit to menu!"
+							break
+			elif action==3:
+				query()
+                                print "\nDear \033[31m"+str(parameter.account)+"\033[0m,your credit is \033[31m"+str(parameter.account_credit)+"\033[0m,your balance is \033[31m"+str(parameter.account_balance)+"\033[0m!"
+                                while True:
+                                        prompt="Please enter the amount of money:"
+                                        err_prompt="\033[31mThe number must ber integer!\033[0m"
+                                        amount=inputs(prompt,err_prompt)
+                                        if amount is not None:
+                                                        now=time.strftime("%Y-%m-%d %H:%M:%S",time.localtime())
+                                                        transaction(parameter.account,now,"Save",amount)
+                                                        print "\n\033[32mSave Money Successfully!\033[0m"
+							loger(parameter.account,now,"Save",amount,0)
+                                                        break
+			elif action==4:
+				day=time.strftime("%d",time.localtime())
+				year_mouth=time.strftime("%Y-%m",time.localtime())
+				if day=="30":
+					total_spend=0
+					print "\n\033[31m%s Account %s Transaction Record:\n\033[0m"%(year_mouth,parameter.account)
+					print "Account Date       time    Type Money Interest"
+					for i in file("credit_account.log","r").readlines():
+						if parameter.account==int(i.split()[0]) and year_mouth in i.split()[1]:
+							if i.split()[3]=="Save":
+								sys.stdout.write("\033[31m%s\033[0m"%i)
+							#	print "\033[31m%s\033[0m"%i,
+							else:
+								print i,
+								total_spend+=int(i.split()[4])
+					print "\n\033[32m%s total spend is:%s\033[0m"%(year_mouth,total_spend)
+				else:
+					print "The date is not correct,Can not print transaction record!"
+			elif action==1:
+				query()
+				print "\nDear \033[31m"+str(parameter.account)+"\033[0m,your credit is \033[31m"+str(parameter.account_credit)+"\033[0m,your balance is \033[31m"+str(parameter.account_balance)+"\033[0m!"
+	elif choice==2:
+		if parameter.account==0:
+			while True:
+				prompt="Please input your card number:"
+                        	err_prompt="\033[31mCard number must ber integer!\033[0m"
+                        	card_number=inputs(prompt,err_prompt)
+                        	if card_number is not None:
+                                	if login(card_number)==1:
+                                        	print "\nHi \033[31m"+str(parameter.account)+"\033[0m Welcome to \033[32mPython Bank\033[0m!"
+                                        	break
+		while True:
+                        select=shopping_menu()
+                        if select==886:
+                                break
+                        else:
+				for i in file("shoppinglist.txt","r").readlines():
+					if select==int(i.split()[0]):
+						amount=int(i.split()[2])
+						tran_type=i.split()[1]
+						break
+                                query()
+                                print "\nDear \033[31m"+str(parameter.account)+"\033[0m,your credit is \033[31m"+str(parameter.account_credit)+"\033[0m,your balance is \033[31m"+str(parameter.account_balance)+"\033[0m!"
+                                if amount < parameter.account_balance:
+                                 	now=time.strftime("%Y-%m-%d %H:%M:%S",time.localtime())
+                                 	transaction(parameter.account,now,"Shopping",amount)
+					loger(parameter.account,now,tran_type,amount,0)
+                                        print "\nShopping Successfully!"
+                                else:
+                                 	print "Total is \033[31m"+str(amount)+"\033[0m, Insufficient balance!return to shopping menu!"
+				
+	elif choice==3:
+		while True:
+                        prompt="Please input your Administrator number:"
+                        err_prompt="\033[31mAdministrator number must be integer!\033[0m"
+                        card_number=inputs(prompt,err_prompt)
+                        if card_number is not None:
+                                if login(card_number,account="admin.txt")==1:
+                                        print "\nHi \033[31m"+str(parameter.account)+"\033[0m Welcome to \033[32mPython Bank\033[0m!"
+					break
+		while True:
+			locked_number=inputs("Please input the locked number:","\033[31mThe locked number must be integer\033[0m")
+			if locked_number is not None:
+				if unlock(locked_number)==1:
+					print "\n\033[31munlock success!\033[0m"
+					parameter.account=0
+					break
+				else:
+					print "\033[31mYour account is not correct!try again or quit\033[33m<ctrl+c>\033[0m"
+				
+					
+	elif choice==4:
+		sys.exit(1)
+
+
+
+
+
+
+

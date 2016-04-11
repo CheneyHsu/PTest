@@ -1,0 +1,54 @@
+/bin/hostname
+dmidecode -t "1"
+dmidecode -t "0"
+dmidecode -t "10"
+lspci | grep Ethernet
+x=`ifconfig -a | grep eth | wc -l`; y=0 ;if [ ${y} -lt ${x} ];then echo "NIC name is : eth$y";ethtool -i eth$y ; y=y+1; fi
+dmidecode -t "16"
+dmidecode -t "17" | grep -E "Total|Data|Size|Form|Manuf|Serial|Part|Type|Speed" | grep -Ev "Unknown|No|DIMM|DRAM"
+dmidecode -t "19"
+dmidecode --type "4" | grep -E "Core|Thread|Sock"
+/sbin/ifconfig | grep  -E '(Link | inet)'
+/sbin/route -v
+cat /etc/resolv.conf
+rpm -qa > /tmp/rpm.txt ;sleep 3;cat /tmp/rpm.txt | wc -l
+cat /tmp/rpm.txt
+cat /etc/fstab
+/bin/cat /proc/cpuinfo | grep -E 'physical id|core id|cpu cores|model name|MHz'
+/bin/df -hlP
+/bin/df -ilP
+/bin/mount | column -t
+/sbin/fdisk -l
+/sbin/pvdisplay
+/sbin/vgdisplay
+/sbin/lvdisplay
+cat /etc/passwd
+grep '/bin/bash$' /etc/passwd | cut -d: -f1 | awk 'BEGIN{FS=":";OFS="\n"}{print $1} END{print "\n"}'
+cat /etc/passwd |awk -F: '{if ($3~/^0$/) print $1,$3}'
+cat /etc/passwd |awk -F: '{if ($4~/^0$/) print $1,$4}'
+cat /etc/group |awk -F: '{if ($3~/^0$/) print $1,$3}'
+cat  /etc/group
+cat /proc/meminfo
+/sbin/swapon -s
+/sbin/chkconfig --list
+uname -a
+head /etc/issue
+uptime
+/sbin/iptables -L -n
+/sbin/lsmod
+env
+cat /etc/hosts
+cat /etc/sysconfig/i18n
+/sbin/runlevel
+if [ -d /var/spool/cron/tabs ];then for i in `ls /var/spool/cron/tabs/* | awk -F "/" '{print $6}'`; do         echo $i;         cat /var/spool/cron/tabs/$i | grep -v ^#;         echo ''; done; else for i in `ls /var/spool/cron/* | awk -F "/" '{print $5}'`; do         echo $i;         cat /var/spool/cron/$i;         echo ''; done; fi
+ulimit -a
+ipcs
+ps auxw|head -1  ; ps auxw --sort=%cpu | tail -n 10 | sed "s/</-s/g"
+ps auxw|head -1  ; ps auxw --sort=%cpu | tail -n 10 | sed "s/</-s/g"
+/sbin/chkconfig --list
+grep "Red Hat" /etc/issue ; if [ $? = 0 ];then cat /var/log/cron | grep "`date | cut -d " " -f 2-3`"; else cat /var/log/messages | grep cron | grep "`date | cut -d " " -f 2-3`" ; fi
+last|head -50
+cat /var/log/messages | grep "`date | cut -d " " -f 2-3`"|grep -i 'ERROR'
+cat /var/log/mcelog
+clustat
+cman_tool status

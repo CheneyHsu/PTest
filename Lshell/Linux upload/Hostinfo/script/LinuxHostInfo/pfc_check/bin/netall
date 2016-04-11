@@ -1,0 +1,23 @@
+netif_to_examine=""
+print netif_to_examine
+# print headers before the loop
+print "Time       Name                                  inbytes/s     outbytes/s      totalbytes/s   inpacket/s     outpacket/s"
+#print "-----------------------------------------------------------------"
+
+# begin loop
+netif loop 
+{
+# print information for the selected interface or if null then all:
+        IF (BYNETIF_NAME == netif_to_examine) or (netif_to_examine == "") THEN
+        {
+#              IF BYNETIF_IN_BYTE_RATE > 0 or BYNETIF_OUT_BYTE_RATE > 0 THEN
+#              {
+# print one line per interface reported which has byte_rate > 0:
+#   print GBL_STATDATE,"  ",GBL_STATTIME," ",BYNETIF_NAME,"",BYNETIF_IN_BYTE_RATE,"",BYNETIF_OUT_BYTE_RATE
+#   print GBL_STATDATE," ",GBL_STATTIME," ",BYNETIF_NAME,"",BYNETIF_IN_BYTE_RATE,"",BYNETIF_OUT_BYTE_RATE," ",BYNETIF_IN_BYTE_RATE + BYNETIF_OUT_BYTE_RATE," ",BYNETIF_IN_PACKET_RATE," ",BYNETIF_OUT_PACKET_RATE
+   print GBL_STATTIME," ",BYNETIF_NAME," ",BYNETIF_IN_BYTE_RATE,"  ",BYNETIF_OUT_BYTE_RATE,"  ",BYNETIF_IN_BYTE_RATE + BYNETIF_OUT_BYTE_RATE,"  ",BYNETIF_IN_PACKET_RATE,"  ",BYNETIF_OUT_PACKET_RATE
+#              }
+# (note that some interface types do not report collisions or errors)
+        }
+}
+print ""
