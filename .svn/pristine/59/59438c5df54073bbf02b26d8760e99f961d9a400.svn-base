@@ -1,6 +1,0 @@
-#File Backup
-#/etc/passwd
-#/etc/hosts 
-/etc/group 
-#/etc/fstab
-/etc/services

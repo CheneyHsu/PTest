@@ -1,1 +1,0 @@
-truss -aefo /tmp/xxx.log  -p <pid>

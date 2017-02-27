@@ -1,3 +1,0 @@
-#oracle DBA 的数据库检查项 
-get_dbtime                        # 1.	DBtime近一周变化趋势及上一周对比(适用10以上版本)
-get_iops                          # 2.	IO MBPS近一周变化趋势及上一周对比(适用10以上版本)
