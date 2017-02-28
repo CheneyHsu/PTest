@@ -1,0 +1,50 @@
+定时获得服务器上内存的使用率 
+
+linux的内存使用跟win是不一样的，以下linux命令获得内存使用率是，linux os 预先分配的，实际上可能还没有使用这么多内存，可以使用 
+
+
+
+
+Python代码 复制代码 收藏代码
+1.$free -m   
+2.             total       used       free     shared    buffers     cached  
+3.Mem:          1942       1671        271          0        404        731  
+4.-/+ buffers/cache:         535      1406  
+5.Swap:         6015          5       6010  
+
+
+
+实际使用的内存是 535M 
+但是linux os占据了 1671M 
+
+
+对比下，可以使用以下代码获得操作系统占用的内存 
+
+
+
+
+Python代码 复制代码 收藏代码
+1.re_meminfo_parser = re.compile(r'^(?P<key>\S*):\s*(?P<value>\d*)\s*kB')  
+2.def _get_mem_usage(self):  
+3.    """ 
+4.    get mem used by percent 
+5.    self.result = falot 
+6.    """  
+7.    result={}  
+8.    try:  
+9.        fd=open('/proc/meminfo', 'r')  
+10.        lines=fd.readlines()  
+11.    finally:  
+12.        if fd:  
+13.            fd.close()  
+14.    for line in lines:  
+15.        match=re_meminfo_parser.match(line)  
+16.        if not match:  
+17.            continue # skip lines that don't parse  
+18.        key, value=match.groups(['key', 'value'])  
+19.        result[key]=int(value)  
+20.    #print "mem :", 100*(result["MemTotal"]-result["MemFree"])/result["MemTotal"]  
+21.    return 100.0*(result["MemTotal"]-result["MemFree"])/result["MemTotal"]  
+
+.
+声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。 

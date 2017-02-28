@@ -1,0 +1,26 @@
+OS
+   chdir   更改目录
+   getcwd   获取当前目录
+   os.path.join  函数从一个或多个路径片段中构造一个路径 名
+   os.path.expanduser() 用来将包含~符号(表示当前用户 Home 目录)的路径扩展为完整的路径。
+   os.path.split()  函数分割一个完整路径并返回目录和文件名
+   (dirname, filename) = os.path.split(pathname) 
+   					第一个变量 dirname,获得了 os.path.split() 函数返回元组 中的第一个元素,文件所在的目录。
+					第二个变量 filename,获得了 os.path.split() 函数返回元 组中的第二个元素,文件名。
+	(shortname, extension) = os.path.splitext(filename)   os.path.splitext() 函数,它分割一个文件 名并返回短文件名和扩展名。
+	metadata = os.stat('feed.xml')   调用 os.stat() 函数返回一个包含多种文件元信息的对象。
+	metadata.st_mtime  st_mtime 是最后修改时间,它的格式不是很有用。(技术上 讲,它是从纪元,也就是 1970 年 1 月 1 号的第一秒钟,到现在 的秒数)
+	print(os.path.realpath('feed.xml')) 当你希望构造一个从根目录开始或者是包含盘符的绝对路径 时,你就需要用到os.path.realpath()函数了。
+											(注意文件夹空格问题.)
+
+
+glob 
+模块是 Python 标准库中的另一个工具,它可以通过编程的 方法获得一个目录的内容,并且它使用熟悉的命令行下的通配 符。 glob 模块使用 shell 风格的通配符。
+	glob.glob('*test*.py')   在 glob 模式中你可以使用多个通配符。这个例子在当前工作 目录中找出所有扩展名为.py 并且在文件名中包含单词 test 的 文件。
+	
+	
+time
+time 模块是 Python 标准库的一部分。 它包含用于在不同时 间格式中转换,将时间格式化成字符串以及处理时区的函数。
+		time.localtime() 函数将从纪元到现在的秒数这个格式表示的时间(os.stat()函数返回值的 st_mtime 属性)
+						转换成更有用的 包含年、月、日、小时、分钟、秒的结构体。这个文件的最后 修改时间是 2009 年 7 月 13 日下午 5:25。
+						

@@ -1,0 +1,16 @@
+(dp0
+S'654321'
+p1
+(lp2
+S'BigBrother'
+p3
+aI2100
+aI100
+asS'123456'
+p4
+(lp5
+S'alex3714'
+p6
+aI15000
+aI15000
+as.
